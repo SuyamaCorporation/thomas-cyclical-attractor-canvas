@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thomas Cyclically Symmetric Attractor Canvas</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0a0a0f; }
+  canvas { display: block; }
+  input[type=range] { accent-color: #7c3aed; }
+  .glow { text-shadow: 0 0 8px currentColor; }
+</style>
+</head>
+<body class="text-gray-200 min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold text-purple-400 glow mt-2 mb-1">Thomas Cyclically Symmetric Attractor</h1>
+<p class="text-gray-500 text-sm mb-3">3D strange attractor: dx/dt = sin(y)−bx, dy/dt = sin(z)−by, dz/dt = sin(x)−bz</p>
+
+<div class="flex flex-col lg:flex-row gap-4 w-full max-w-6xl">
+  <canvas id="canvas" width="800" height="600" class="rounded-xl border border-purple-900 flex-shrink-0 cursor-grab active:cursor-grabbing" aria-label="Thomas attractor visualization"></canvas>
+
+  <div class="flex flex-col gap-3 min-w-[240px]">
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+      <h2 class="text-purple-300 font-semibold mb-3">Parameters</h2>
+
+      <label class="block text-xs text-gray-400 mb-1">b = <span id="bVal" class="text-purple-300 font-mono">0.2090</span></label>
+      <input type="range" id="bSlider" min="0.1" max="0.5" step="0.001" value="0.208963" class="w-full mb-1">
+      <div id="behaviorLabel" class="text-xs px-2 py-1 rounded text-center font-semibold mb-3"></div>
+
+      <label class="block text-xs text-gray-400 mb-1">Speed: <span id="speedVal" class="text-purple-300 font-mono">8</span></label>
+      <input type="range" id="speedSlider" min="1" max="30" step="1" value="8" class="w-full mb-3">
+
+      <label class="block text-xs text-gray-400 mb-1">Trail length: <span id="trailVal" class="text-purple-300 font-mono">600</span></label>
+      <input type="range" id="trailSlider" min="50" max="2000" step="50" value="600" class="w-full mb-3">
+
+      <label class="block text-xs text-gray-400 mb-1">Trajectories: <span id="trajVal" class="text-purple-300 font-mono">10</span></label>
+      <input type="range" id="trajSlider" min="2" max="12" step="1" value="10" class="w-full mb-3">
+
+      <label class="block text-xs text-gray-400 mb-1">Projection</label>
+      <select id="projSelect" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200 mb-3">
+        <option value="perspective">Perspective</option>
+        <option value="orthographic">Orthographic</option>
+      </select>
+
+      <label class="flex items-center gap-2 text-xs text-gray-400 mb-3 cursor-pointer">
+        <input type="checkbox" id="autoRotate" checked class="accent-purple-500"> Auto-rotate
+      </label>
+
+      <button id="resetBtn" class="w-full bg-purple-700 hover:bg-purple-600 text-white rounded-lg py-2 text-sm font-semibold transition">Reset</button>
+    </div>
+
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+      <h2 class="text-purple-300 font-semibold mb-2">Trajectories</h2>
+      <div id="colorLegend" class="flex flex-col gap-1 text-xs"></div>
+    </div>
+
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 text-xs text-gray-400">
+      <p class="font-semibold text-gray-300 mb-1">About</p>
+      <p>Thomas' attractor is chaotic when b ≈ 0.19–0.33. Lower b → more complex, fractal-like. Higher b → limit cycles or fixed points. Drag to rotate manually.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const bSlider = document.getElementById('bSlider');
+const speedSlider = document.getElementById('speedSlider');
+const trailSlider = document.getElementById('trailSlider');
+const trajSlider = document.getElementById('trajSlider');
+const projSelect = document.getElementById('projSelect');
+const autoRotate = document.getElementById('autoRotate');
+const resetBtn = document.getElementById('resetBtn');
+const behaviorLabel = document.getElementById('behaviorLabel');
+const colorLegend = document.getElementById('colorLegend');
+
+const COLORS = [
+  '#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#ff922b',
+  '#cc5de8','#20c997','#f06595','#74c0fc','#a9e34b',
+  '#ff8787','#63e6be'
+];
+
+let b = 0.208963;
+let stepsPerFrame = 8;
+let maxTrail = 600;
+let numTraj = 10;
+let projection = 'perspective';
+let autoRot = true;
+let rotX = 0.3, rotY = 0.0;
+let trajectories = [];
+let animId = null;
+
+// Mouse drag
+let dragging = false, lastMX = 0, lastMY = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lastMX = e.clientX; lastMY = e.clientY; });
+canvas.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastMX, dy = e.clientY - lastMY;
+  rotY += dx * 0.005; rotX += dy * 0.005;
+  lastMX = e.clientX; lastMY = e.clientY;
+  autoRotate.checked = false; autoRot = false;
+});
+canvas.addEventListener('mouseup', () => { dragging = false; });
+canvas.addEventListener('mouseleave', () => { dragging = false; });
+canvas.addEventListener('touchstart', e => {
+  const t = e.touches[0]; dragging = true; lastMX = t.clientX; lastMY = t.clientY; e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  const t = e.touches[0];
+  rotY += (t.clientX - lastMX) * 0.005; rotX += (t.clientY - lastMY) * 0.005;
+  lastMX = t.clientX; lastMY = t.clientY; e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchend', () => { dragging = false; });
+
+function rk4Step(x, y, z, dt, b) {
+  const f = (x,y,z) => [Math.sin(y)-b*x, Math.sin(z)-b*y, Math.sin(x)-b*z];
+  const [k1x,k1y,k1z] = f(x,y,z);
+  const [k2x,k2y,k2z] = f(x+dt/2*k1x, y+dt/2*k1y, z+dt/2*k1z);
+  const [k3x,k3y,k3z] = f(x+dt/2*k2x, y+dt/2*k2y, z+dt/2*k2z);
+  const [k4x,k4y,k4z] = f(x+dt*k3x, y+dt*k3y, z+dt*k3z);
+  return [x+dt/6*(k1x+2*k2x+2*k3x+k4x), y+dt/6*(k1y+2*k2y+2*k3y+k4y), z+dt/6*(k1z+2*k2z+2*k3z+k4z)];
+}
+
+function initTrajectories() {
+  trajectories = [];
+  for (let i = 0; i < numTraj; i++) {
+    const angle = (i / numTraj) * Math.PI * 2;
+    const r = 2 + Math.random();
+    trajectories.push({
+      x: r * Math.cos(angle), y: r * Math.sin(angle), z: (Math.random()-0.5)*2,
+      trail: [], color: COLORS[i % COLORS.length]
+    });
+  }
+  updateLegend();
+}
+
+function updateLegend() {
+  colorLegend.innerHTML = '';
+  trajectories.forEach((t, i) => {
+    const d = document.createElement('div');
+    d.className = 'flex items-center gap-2';
+    d.innerHTML = `<span style="background:${t.color}" class="w-4 h-2 rounded inline-block"></span><span>Trajectory ${i+1}</span>`;
+    colorLegend.appendChild(d);
+  });
+}
+
+function project3D(x, y, z) {
+  // Rotate around Y then X
+  const cx = Math.cos(rotY), sx = Math.sin(rotY);
+  const cy = Math.cos(rotX), sy = Math.sin(rotX);
+  // Rotate Y
+  let rx = cx*x + sx*z, ry = y, rz = -sx*x + cx*z;
+  // Rotate X
+  let fx = rx, fy = cy*ry - sy*rz, fz = sy*ry + cy*rz;
+
+  const scale = 60;
+  const W = canvas.width / 2, H = canvas.height / 2;
+  if (projection === 'perspective') {
+    const d = 8;
+    const pz = fz + d;
+    return [W + scale * fx / pz * d, H - scale * fy / pz * d];
+  } else {
+    return [W + scale * fx, H - scale * fy];
+  }
+}
+
+function updateBehavior() {
+  b = parseFloat(bSlider.value);
+  document.getElementById('bVal').textContent = b.toFixed(4);
+  if (b < 0.329) {
+    behaviorLabel.textContent = '⚡ Chaotic';
+    behaviorLabel.className = 'text-xs px-2 py-1 rounded text-center font-semibold mb-3 bg-red-900 text-red-300';
+  } else {
+    behaviorLabel.textContent = '↻ Periodic / Limit Cycle';
+    behaviorLabel.className = 'text-xs px-2 py-1 rounded text-center font-semibold mb-3 bg-blue-900 text-blue-300';
+  }
+}
+
+let frameCount = 0;
+function animate() {
+  animId = requestAnimationFrame(animate);
+  if (autoRot) rotY += 0.003;
+  frameCount++;
+
+  // Fade trail
+  ctx.fillStyle = 'rgba(10,10,15,0.18)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (const traj of trajectories) {
+    for (let s = 0; s < stepsPerFrame; s++) {
+      const dt = 0.02;
+      [traj.x, traj.y, traj.z] = rk4Step(traj.x, traj.y, traj.z, dt, b);
+      traj.trail.push([traj.x, traj.y, traj.z]);
+      if (traj.trail.length > maxTrail) traj.trail.shift();
+    }
+
+    if (traj.trail.length < 2) continue;
+    ctx.beginPath();
+    ctx.strokeStyle = traj.color;
+    ctx.lineWidth = 1.2;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = traj.color;
+    const [px0, py0] = project3D(...traj.trail[0]);
+    ctx.moveTo(px0, py0);
+    for (let i = 1; i < traj.trail.length; i++) {
+      const alpha = i / traj.trail.length;
+      ctx.globalAlpha = alpha * 0.9;
+      const [px, py] = project3D(...traj.trail[i]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+}
+
+// Controls
+bSlider.addEventListener('input', updateBehavior);
+speedSlider.addEventListener('input', () => {
+  stepsPerFrame = parseInt(speedSlider.value);
+  document.getElementById('speedVal').textContent = stepsPerFrame;
+});
+trailSlider.addEventListener('input', () => {
+  maxTrail = parseInt(trailSlider.value);
+  document.getElementById('trailVal').textContent = maxTrail;
+  trajectories.forEach(t => { if (t.trail.length > maxTrail) t.trail.splice(0, t.trail.length - maxTrail); });
+});
+trajSlider.addEventListener('input', () => {
+  numTraj = parseInt(trajSlider.value);
+  document.getElementById('trajVal').textContent = numTraj;
+  initTrajectories();
+});
+projSelect.addEventListener('change', () => { projection = projSelect.value; });
+autoRotate.addEventListener('change', () => { autoRot = autoRotate.checked; });
+resetBtn.addEventListener('click', () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  initTrajectories();
+});
+
+// Init
+updateBehavior();
+initTrajectories();
+animate();
+</script>
+</body>
+</html>
